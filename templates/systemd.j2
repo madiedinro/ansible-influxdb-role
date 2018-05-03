@@ -1,0 +1,20 @@
+# If you modify this, please also make sure to edit init.sh
+
+[Unit]
+Description=InfluxDB is an open-source, distributed, time series database
+Documentation=https://docs.influxdata.com/influxdb/
+After=network-online.target
+
+[Service]
+User={{ influxdb_user }}
+Group={{ influxdb_group }}
+LimitNOFILE=65536
+EnvironmentFile=-/etc/default/influxdb
+Environment=GOMAXPROCS={{ influxdb_maxprocs }}
+ExecStart={{influxdb_influxd_bin}} -config {{ influxdb_config_file }}
+KillMode=control-group
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+Alias={{ service_name }}.service

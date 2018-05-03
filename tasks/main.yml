@@ -1,0 +1,121 @@
+---
+
+- name: Create influxdb group
+  group:
+    name: "{{ influxdb_group }}"
+    state: present
+  tags:
+    - influxdb
+
+- name: Create influxdb user
+  user:
+    name: "{{ influxdb_user }}"
+    group: "{{ influxdb_group }}"
+    state: present
+  tags:
+    - influxdb
+
+#- name: Configure collectd
+#  include: collectd.yml
+#  when: influxdb_collectd_enabled == "true"
+
+
+- name: Install any necessary dependency
+  apt:
+    name: "apt-transport-https"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+
+- name: Import InfluxData GPG signing key
+  apt_key:
+    url: https://mirrors.tuna.tsinghua.edu.cn/influxdata/influxdb.key
+    state: present
+    id: "0x2582E0C5"
+
+- name: Add InfluxData repository
+  apt_repository:
+    repo: deb https://mirrors.tuna.tsinghua.edu.cn/influxdata/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} {{ influxdb_repository_channel }}
+    state: present
+
+- name: Install InfluxDB package
+  apt:
+    name: influxdb
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+
+- name: Create data and config directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    group: "{{ influxdb_group }}"
+    owner: "{{ influxdb_user }}"
+  with_items:
+    - "{{ influxdb_data_dir }}"
+    - "{{ influxdb_meta_dir }}"
+    - "{{ influxdb_wal_dir }}"
+    - "{{ influxdb_config_dir }}"
+
+
+- name: Write config
+  template:
+    src: influxdb.conf.j2
+    dest: "{{ influxdb_generated_config }}"
+    group: "{{ influxdb_group }}"
+    owner: "{{ influxdb_user }}"
+    force: yes
+  register: write_config
+  notify:
+    - restart influxdb
+
+
+- name: Run config update
+  command: "{{ influxdb_influxd_bin }} config -config {{ influxdb_generated_config }}"
+  register: influxdb_merged_config
+  become: yes
+  when: write_config | changed
+
+- name: Write merged config
+  copy:
+    content: "{{ influxdb_merged_config.stdout }}"
+    dest: "{{ influxdb_config_file }}"
+    group: "{{ influxdb_group }}"
+    owner: "{{ influxdb_user }}"
+  when: influxdb_merged_config | changed
+  tags:
+    - influxdb
+
+- name: Ensure directories have correct permissions
+  file:
+    path: "{{ item  }}"
+    owner: "{{ influxdb_user }}"
+    group: "{{ influxdb_group }}"
+    recurse: yes
+  with_items:
+    - "{{ influxdb_meta_dir }}"
+    - "{{ influxdb_data_dir }}"
+    - "{{ influxdb_wal_dir }}"
+
+- name: Add systemd Script
+  template:
+    src: systemd.j2
+    dest: "/lib/systemd/system/{{ service_name }}.service"
+    force: yes
+  become: yes
+  tags: ['systemd']
+
+
+- name: Force systemd to reread configs (2.4 and above)
+  systemd: daemon_reload=yes
+  become: true
+  tags: ['systemd']
+
+- name: Enabling and restarting systemd service
+  systemd:
+    name: '{{ service_name }}.service'
+    state: restarted
+    enabled: True
+  tags: ['systemd']
